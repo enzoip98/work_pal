@@ -1,44 +1,11 @@
-# -*- coding: utf-8 -*-
 from __future__ import annotations
 
 from typing import Iterable, Optional, List, Dict, Any, Tuple
-from datetime import date, datetime, timezone
-
-# NOTA: aquí ya NO usamos SQLAlchemy
-# Usamos el cliente de Supabase (PostgREST)
-# from supabase import Client
-
-# Si quieres tipos ligeros de retorno (opcionales)
-Employee = Dict[str, Any]
-Checkin = Dict[str, Any]
-Task = Dict[str, Any]
-
-# --------------------------
-# Helpers generales
-# --------------------------
-def _norm_email(email: str) -> str:
-    return (email or "").lower().strip()
-
-def _strip_or_none(s: Optional[str]) -> Optional[str]:
-    if s is None:
-        return None
-    s2 = s.strip()
-    return s2 if s2 else ""
+from datetime import date
 
 # --------------------------
 # Employees
 # --------------------------
-def create_employee(client, *, email: str, name: str, active: bool = True) -> Employee:
-    """
-    INSERT en employees. Devuelve la fila insertada.
-    """
-    payload = {
-        "email": _norm_email(email),
-        "name": (name or "").strip(),
-        "active": active,
-    }
-    res = client.table("employees").insert(payload, returning="representation").execute()
-    return (res.data or [None])[0]
 
 def get_employees(client, active_only: bool = True) -> List[Employee]:
     q = client.table("employees").select("*")
@@ -46,17 +13,6 @@ def get_employees(client, active_only: bool = True) -> List[Employee]:
         q = q.eq("active", True)  # filtro por igualdad
     res = q.order("id", desc=False).execute()
     return res.data or []
-
-def get_employee_by_email(client, email: str) -> Optional[Employee]:
-    res = (
-        client.table("employees")
-        .select("*")
-        .eq("email", _norm_email(email))
-        .limit(1)
-        .execute()
-    )
-    rows = res.data or []
-    return rows[0] if rows else None
 
 # --------------------------
 # Checkins
@@ -69,19 +25,14 @@ def upsert_checkin(
     thread_id: Optional[str],
     first_message_id: Optional[str],
 ) -> Checkin:
-    """
-    Idempotente por (date, employee_id). Si quieres que el PK id del check-in
-    esté ligado al hilo de Gmail, usamos thread_id como id.
-    """
-    # Validación: necesitamos al menos uno
+
     if not (thread_id or first_message_id):
         raise ValueError("Se requiere thread_id (o first_message_id) para generar el id del check-in.")
 
-    # 👇 clave: setear id ligado al hilo
-    checkin_id = thread_id or first_message_id  # preferimos thread_id
+    checkin_id = thread_id or first_message_id
 
     payload = {
-        "id": checkin_id,                 # <<<<<<<<<<<<<<<< importa esto
+        "id": checkin_id,
         "date": str(the_date),
         "employee_id": employee["id"],
         "thread_id": thread_id,
@@ -136,6 +87,17 @@ def upsert_checkin(
     rows = res3.data or []
     return rows[0] if rows else None
 
+def get_today_tasks(client):
+    today = date.today()
+    res = (
+        client.table("checkins")
+        .select("date, employee:employee_id(name), tasks(title,status,progress,blocker)")
+        .eq("date", str(today))
+        .execute()
+    )
+    rows = res.data or []
+    return rows
+
 def get_today_checkins_by_thread(client, thread_id: str) -> Optional[Checkin]:
     today = date.today()
     res = (
@@ -158,29 +120,19 @@ def mark_replied(client, checkin_id: str, ts: Optional[datetime] = None) -> None
         .execute()
     )
 
-def get_pending_checkins(client, *, the_date: date) -> List[Checkin]:
-    """
-    Check-ins del día sin respuesta para empleados activos.
-    En dos pasos para evitar JOINs complejos en el cliente:
-      1) ids de empleados activos
-      2) checkins del día con reply_received_at IS NULL y employee_id en esos ids
-    """
-    # 1) empleados activos
-    emp_res = client.table("employees").select("id").eq("active", True).execute()
-    emp_ids = [r["id"] for r in (emp_res.data or [])]
-    if not emp_ids:
-        return []
+def get_pending_checkins(client) -> List[Checkin]:
 
-    # 2) checkins filtrados (IS NULL y fecha)
+    # 1) empleados activos
+    today = date.today()
     res = (
         client.table("checkins")
-        .select("*")
-        .eq("date", str(the_date))
-        .is_("reply_received_at", "null")  # IS NULL
-        .in_("employee_id", emp_ids)
-        .order("id", desc=False)
+        .select("id,thread_id,date,employee:employee_id(name,email,active)")
+        .eq("date", str(today))
+        .eq("employee.active", True)
+        .is_("reply_received_at", "null")
         .execute()
     )
+    print(res)
     return res.data or []
 
 # --------------------------
@@ -191,6 +143,9 @@ def replace_tasks(client, *, checkin_id: str, tasks: Iterable[dict]) -> List[Tas
     Borra todas las tareas del checkin y vuelve a insertarlas (idempotente a nivel de checkin).
     Normaliza 'status' y 'progress'.
     """
+
+    if tasks == []:
+        return []
     # Borrado por checkin_id
     _ = client.table("tasks").delete().eq("checkin_id", checkin_id).execute()
 
@@ -246,42 +201,3 @@ def _count_checkins(client, where: List[Tuple[str, str, Any]]) -> int:
             raise ValueError(f"Operador no soportado: {op}")
     res = q.execute()
     return int(res.count or 0)
-
-def build_summary_text(client, *, the_date: date) -> str:
-    total = _count_checkins(client, [("date", "eq", str(the_date))])
-    responded = _count_checkins(
-        client,
-        [("date", "eq", str(the_date)), ("reply_received_at", "not_null", None)],
-    )
-    pending = total - responded
-
-    # Blockers: tareas cuyo checkin es del día y blocker no es NULL ni vacío
-    # 1) ids de checkins del día
-    chks = (
-        client.table("checkins")
-        .select("id")
-        .eq("date", str(the_date))
-        .execute()
-        .data
-        or []
-    )
-    chk_ids = [c["id"] for c in chks]
-    blockers = 0
-    if chk_ids:
-        res_tasks = (
-            client.table("tasks")
-            .select("id,blocker")
-            .in_("checkin_id", chk_ids)
-            .not_.is_("blocker", "null")  # NOT IS NULL
-            .neq("blocker", "")           # y no vacío
-            .execute()
-        )
-        blockers = len(res_tasks.data or [])
-
-    return (
-        f"Fecha: {the_date}\n"
-        f"Total check-ins: {total}\n"
-        f"Respondieron: {responded}\n"
-        f"Pendientes: {pending}\n"
-        f"Tareas con bloqueo: {blockers}\n"
-    )

@@ -1,20 +1,19 @@
-# scripts/test_integration_ingest_replies.py
 from __future__ import annotations
 import argparse, base64
 from datetime import date
 from typing import Optional, Dict
 
-from app.db.base import get_db                      # ✅ ahora usamos el cliente Supabase
+from app.db.base import get_db
 from app.db.crud import (
     get_today_checkins_by_thread,
     replace_tasks,
-    mark_replied,
+    mark_replied
 )
 from app.services.gmail_client import list_messages, get_message
 from app.services.extractor_ai import extract_structured
 from dotenv import load_dotenv
 
-load_dotenv()  # APP_TZ, OPENAI_API_KEY, etc.
+load_dotenv()
 
 
 def _decode_text(full_msg: Dict) -> Optional[str]:
@@ -98,7 +97,7 @@ def run(the_date: date, persist: bool):
                     f"progress={t.progress} | next={t.next_steps} | blocker={t.blocker}"
                 )
             processed += 1
-
+            print(extracted.tasks)
             # 6) Persistencia (opcional)
             if persist:
                 # checkin_id ahora es string (ligado a threadId según tu flujo)

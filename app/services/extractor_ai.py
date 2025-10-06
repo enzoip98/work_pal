@@ -10,6 +10,8 @@ import os
 
 load_dotenv()  # carga variables de .env
 PROMPT_ID = os.environ.get('OPEN_AI_PROMPT_ID')
+SUMMARY_PROMPT_ID = os.environ.get('SUMMARY_PROMPT_ID')
+SUMMARY_PROMPT_VERSION = os.environ.get('SUMMARY_PROMPT_VERSION')
 PROMPT_VERSION = os.environ.get('OPEN_AI_PROMPT_VERSION')
 # El cliente lee OPENAI_API_KEY del entorno (puedes cargar .env en app/db/base.py)
 client = OpenAI()
@@ -81,3 +83,17 @@ def extract_structured(subject: str, body_text: str, default_date: str, employee
     except (json.JSONDecodeError, ValidationError) as e:
         # Si vino texto o JSON inválido, usamos fallback y registramos lo ocurrido en logs si quieres
         return _fallback_simple(body_text, employee, default_date)
+
+def extract_tasks(tasks):
+    
+    resp = client.responses.create(
+        prompt={
+            "id": SUMMARY_PROMPT_ID,
+            "version": SUMMARY_PROMPT_VERSION,
+            "variables": {
+                "message": tasks
+            }
+        }
+    )
+    raw = resp.output_text
+    return raw

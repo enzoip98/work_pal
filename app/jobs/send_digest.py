@@ -1,60 +1,23 @@
-from dotenv import load_dotenv
+from datetime import date
 from app.db.base import get_db
+from app.db.crud import get_today_tasks
 from app.services.gmail_client import send_email
+from app.services.extractor_ai import extract_tasks
 
-load_dotenv()  # APP_TZ, OPENAI_API_KEY, etc.
-
-def _fetch_snapshot(db, the_date: date) -> List[Dict[str, Any]]:
-    """
-    Devuelve una lista de tasks enriquecidas con datos de empleado.
-    """
-    # Check-ins del día
-    chks = (
-        db.table("checkins")
-        .select("id, employee_id, thread_id, first_message_id")
-        .eq("date", str(the_date))
-        .execute()
-        .data
-        or []
-    )
-    if not chks:
-        return []
-
-    checkin_ids = [c["id"] for c in chks]
-    employee_ids = list({c["employee_id"] for c in chks})
-
-    # Empleados
-    emps = (
-        db.table("employees")
-        .select("id, name, email")
-        .in_("id", employee_ids)
-        .execute()
-        .data
-        or []
-    )
-    employees_by_id: Dict[str, Dict[str, Any]] = {e["id"]: e for e in emps}
-
-    # Tasks
-    tasks = (
-        db.table("tasks")
-        .select("id, checkin_id, title, status, progress, next_steps, blocker, task_order")
-        .in_("checkin_id", checkin_ids)
-        .order("checkin_id")
-        .order("task_order", desc=False)
-        .execute()
-        .data
-        or []
-    )
-
-    emp_by_checkin = {c["id"]: c["employee_id"] for c in chks}
-    enriched: List[Dict[str, Any]] = []
-    for t in tasks:
-        eid = emp_by_checkin.get(t["checkin_id"])
-        emp = employees_by_id.get(eid, {})
-        enriched.append({
-            **t,
-            "employee_id": eid,
-            "employee_name": (emp.get("name") or emp.get("email") or "").strip(),
-            "employee_email": emp.get("email"),
-        })
-    return enriched
+def main():
+    today = date.today()
+    
+    with get_db() as db:
+        tasks = get_today_tasks(db)
+        if not tasks:
+            print("No hay tareas para hoy.")
+            return
+        
+        subject = f"Resumen diario - Tareas para {today:%Y-%m-%d}"
+        text_body = extract_tasks(str(tasks))
+        try:
+            sent = send_email("enzo.ip.98@gmail.com", subject, text_body)
+        except:
+            print(f"Error enviando reporte de gerencia")
+if __name__ == "__main__":
+    main()

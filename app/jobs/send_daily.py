@@ -26,31 +26,31 @@ def main():
             emp_email = (emp.get("email") or "").strip()
 
             if not emp_email:
-                print(f"⚠️  Saltado (sin email): id={emp.get('id')} nombre={emp_name}")
+                print(f"Saltado (sin email): id={emp.get('id')} nombre={emp_name}")
                 skipped += 1
                 continue
 
-            subject = f"[Seguimiento diario] {today:%Y-%m-%d} — {emp_name}"
+            subject = f"Seguimiento diario - {today:%Y-%m-%d} — {emp_name}"
             body = render_daily(emp_name, today)
 
             try:
-                sent = send_email(emp_email, subject, body)  # {"id": "...", "threadId": "..."}
+                sent = send_email(emp_email, subject, body)
                 chk = upsert_checkin(
                     db,
                     the_date=today,
-                    employee=emp,  # dict con al menos {"id": ..., "email": ...}
+                    employee=emp,
                     thread_id=sent.get("threadId"),
                     first_message_id=sent.get("id"),
                 )
                 print(
-                    "✅ OK envío:",
+                    "OK envío:",
                     emp_email,
                     "| thread:", (chk or {}).get("thread_id"),
                     "| msg:", (chk or {}).get("first_message_id"),
                 )
                 ok += 1
             except Exception as e:
-                print(f"❌ Error enviando a {emp_email}: {e!r}")
+                print(f"Error enviando a {emp_email}: {e!r}")
                 failed += 1
 
     print("-" * 60)

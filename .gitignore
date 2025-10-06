@@ -6,3 +6,9 @@ alembic.ini
 test_db_connect.py
 test_send_email.py
 test_write_task.py
+__pycache__/
+*.pyc
+*.pyo
+*.pyd
+.pytest_cache/
+.mypy_cache/
